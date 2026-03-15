@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Farcaster Bookmarks Exporter",
+  "version": "0.1.0",
+  "description": "Export your Farcaster bookmarks as JSON",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["https://farcaster.xyz/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Export Farcaster Bookmarks"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://farcaster.xyz/*"],
+      "js": ["intercept.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
