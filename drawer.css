@@ -1,0 +1,397 @@
+/* ============================================
+   Farcaster Bookmarks Drawer
+   Scoped with fc-drawer- prefix
+   ============================================ */
+
+/* ---------- Tab Handle ---------- */
+.fc-drawer-tab {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 2147483646;
+  width: 36px;
+  height: 96px;
+  background: #7c3aed;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: -2px 0 12px rgba(124, 58, 237, 0.3);
+  transition: width 0.2s ease, box-shadow 0.2s ease, transform 0.3s ease;
+  user-select: none;
+}
+
+.fc-drawer-tab:hover {
+  width: 40px;
+  box-shadow: -3px 0 16px rgba(124, 58, 237, 0.45);
+}
+
+.fc-drawer-tab-icon {
+  width: 18px;
+  height: 18px;
+  fill: white;
+  opacity: 0.9;
+}
+
+.fc-drawer-tab-badge {
+  background: white;
+  color: #7c3aed;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  border-radius: 10px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+/* Tab pulse animation */
+.fc-drawer-tab.fc-drawer-pulse {
+  animation: fc-drawer-tab-pulse 0.6s ease-out;
+}
+
+@keyframes fc-drawer-tab-pulse {
+  0% { transform: translateY(-50%) scale(1); }
+  30% { transform: translateY(-50%) scale(1.2); }
+  50% { transform: translateY(-50%) scale(0.95); }
+  70% { transform: translateY(-50%) scale(1.08); }
+  100% { transform: translateY(-50%) scale(1); }
+}
+
+/* ---------- Flying +1 Counter ---------- */
+.fc-drawer-fly-counter {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  color: #7c3aed;
+  text-shadow: 0 1px 4px rgba(124, 58, 237, 0.4);
+  animation: fc-drawer-fly-up 0.9s ease-out forwards;
+}
+
+@keyframes fc-drawer-fly-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-40px) scale(1.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-70px) scale(0.8);
+  }
+}
+
+/* ---------- Panel ---------- */
+.fc-drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483645;
+  width: 360px;
+  height: 100vh;
+  transform: translateX(100%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.35s ease;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.fc-drawer-panel.fc-drawer-open {
+  transform: translateX(0);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+}
+
+/* Theme: light (default) */
+.fc-drawer-panel {
+  background: #fafafa;
+  color: #1a1a1a;
+  border-left: 1px solid #e5e5e5;
+}
+
+/* Theme: dark (auto-detect) */
+@media (prefers-color-scheme: dark) {
+  .fc-drawer-panel {
+    background: #1a1a2e;
+    color: #e4e4e7;
+    border-left: 1px solid #2d2d44;
+  }
+
+  .fc-drawer-header {
+    background: #16162a;
+    border-bottom-color: #2d2d44;
+  }
+
+  .fc-drawer-item {
+    background: #22223a;
+    border-color: #2d2d44;
+  }
+
+  .fc-drawer-item:hover {
+    background: #2a2a48;
+  }
+
+  .fc-drawer-item-author {
+    color: #a78bfa;
+  }
+
+  .fc-drawer-item-text {
+    color: #c4c4cc;
+  }
+
+  .fc-drawer-item-time {
+    color: #71717a;
+  }
+
+  .fc-drawer-empty {
+    color: #71717a;
+  }
+
+  .fc-drawer-export-btn {
+    background: #2d2d44;
+    color: #e4e4e7;
+    border-color: #3d3d5c;
+  }
+
+  .fc-drawer-export-btn:hover {
+    background: #3d3d5c;
+  }
+
+  .fc-drawer-close {
+    color: #a1a1aa;
+  }
+
+  .fc-drawer-close:hover {
+    color: #e4e4e7;
+    background: #2d2d44;
+  }
+}
+
+/* ---------- Header ---------- */
+.fc-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: #f0ecfc;
+  border-bottom: 1px solid #e5e5e5;
+  flex-shrink: 0;
+}
+
+.fc-drawer-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fc-drawer-header-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #7c3aed;
+}
+
+.fc-drawer-header-count {
+  font-size: 12px;
+  font-weight: 600;
+  background: #7c3aed;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.fc-drawer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fc-drawer-export-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid #d4d4d8;
+  background: white;
+  color: #3f3f46;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.fc-drawer-export-btn:hover {
+  background: #f4f4f5;
+  border-color: #7c3aed;
+}
+
+.fc-drawer-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #71717a;
+  transition: color 0.15s ease, background 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.fc-drawer-close:hover {
+  color: #1a1a1a;
+  background: #e4e4e7;
+}
+
+/* ---------- Bookmark List ---------- */
+.fc-drawer-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fc-drawer-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fc-drawer-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fc-drawer-list::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 3px;
+}
+
+/* ---------- Bookmark Item ---------- */
+.fc-drawer-item {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: default;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.fc-drawer-item:hover {
+  background: #f9fafb;
+}
+
+.fc-drawer-item-author {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7c3aed;
+  margin-bottom: 4px;
+}
+
+.fc-drawer-item-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #3f3f46;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.fc-drawer-item-time {
+  font-size: 11px;
+  color: #a1a1aa;
+}
+
+/* New item slide-in + glow */
+.fc-drawer-item.fc-drawer-item-new {
+  animation: fc-drawer-slide-in 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+             fc-drawer-glow 1.5s ease-out;
+}
+
+@keyframes fc-drawer-slide-in {
+  0% {
+    opacity: 0;
+    transform: translateX(40px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes fc-drawer-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.5),
+                0 0 20px rgba(124, 58, 237, 0.25);
+  }
+  40% {
+    box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2),
+                0 0 20px rgba(124, 58, 237, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0),
+                0 0 0 rgba(124, 58, 237, 0);
+  }
+}
+
+/* ---------- Empty State ---------- */
+.fc-drawer-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #a1a1aa;
+  text-align: center;
+  padding: 40px 20px;
+  gap: 8px;
+}
+
+.fc-drawer-empty-icon {
+  font-size: 32px;
+  opacity: 0.4;
+}
+
+.fc-drawer-empty-text {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.fc-drawer-empty-sub {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* ---------- Backdrop (optional, subtle) ---------- */
+.fc-drawer-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2147483644;
+  background: rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.fc-drawer-backdrop.fc-drawer-backdrop-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
