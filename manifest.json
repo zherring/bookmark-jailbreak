@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Farcaster Bookmarks Exporter",
-  "version": "0.1.0",
-  "description": "Export your Farcaster bookmarks as JSON",
-  "permissions": ["activeTab", "scripting"],
+  "version": "0.2.0",
+  "description": "Auto-capture and browse your Farcaster bookmarks",
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "webRequest"],
   "host_permissions": ["https://farcaster.xyz/*"],
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Export Farcaster Bookmarks"
+    "default_title": "Farcaster Bookmarks"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_scripts": [
     {
@@ -15,6 +20,12 @@
       "js": ["intercept.js"],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": ["https://farcaster.xyz/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
     }
   ],
   "icons": {
