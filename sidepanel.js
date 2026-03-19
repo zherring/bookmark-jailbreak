@@ -10,6 +10,7 @@
 const listEl = document.getElementById("bookmarkList");
 const statsEl = document.getElementById("stats");
 const searchEl = document.getElementById("search");
+const sortEl = document.getElementById("sortMode");
 const toastEl = document.getElementById("toast");
 const toastTextEl = document.getElementById("toast-text");
 
@@ -18,6 +19,7 @@ let allBookmarks = {};
 // ── Init ──────────────────────────────────────────────────────
 
 async function init() {
+  sortEl.value = getSortMode();
   await loadBookmarks();
   renderList();
   watchStorage();
@@ -36,17 +38,20 @@ function getSortedBookmarks(filter) {
   if (filter) {
     const q = filter.toLowerCase();
     entries = entries.filter((b) => {
-      const text = extractText(b).toLowerCase();
-      const author = extractAuthor(b).toLowerCase();
-      return text.includes(q) || author.includes(q);
+      const text = extractBookmarkText(b).toLowerCase();
+      const author = extractBookmarkAuthor(b).toLowerCase();
+      const quoted = extractBookmarkQuote(b);
+      const quotedText = quoted?.text?.toLowerCase() || "";
+      const quotedAuthor = quoted?.author_display_name?.toLowerCase() || "";
+      return text.includes(q) || author.includes(q) || quotedText.includes(q) || quotedAuthor.includes(q);
     });
   }
 
   // Newest first (descending). Prefer saved_at, fall back to the cast's
   // published timestamp so synced items without a saved_at still sort properly.
   entries.sort((a, b) => {
-    const ta = bestTime(a);
-    const tb = bestTime(b);
+    const ta = bestTime(a, getSortMode());
+    const tb = bestTime(b, getSortMode());
     return tb - ta;
   });
 
@@ -59,14 +64,14 @@ function parseTime(val) {
   return isNaN(t) ? 0 : t;
 }
 
-function bestTime(b) {
-  // Try saved_at first, then fall back to the cast's publish timestamp
+function bestTime(b, sortMode) {
   const saved = parseTime(b.saved_at);
-  if (saved > 0) return saved;
-  const d = b.castData;
-  if (!d) return 0;
-  return parseTime(d.bookmarkedAt) || parseTime(d.timestamp) ||
-    parseTime(d.publishedAt) || parseTime(d.published_at) || 0;
+  const published = parseTime(b.published_at) || parseTime(extractBookmarkPublishedAt(b));
+
+  if (sortMode === "published") {
+    return published || saved || 0;
+  }
+  return saved || published || 0;
 }
 
 // ── Rendering ─────────────────────────────────────────────────
@@ -83,33 +88,36 @@ function renderList() {
       ? `<div class="empty-state"><p>No matches for "${escapeHtml(filter)}"</p></div>`
       : `<div class="empty-state">
            <p>No bookmarks yet</p>
-           <p class="hint">Bookmark a cast on Farcaster and it will appear here automatically.</p>
+           <p class="hint">Sync or capture bookmarks from Farcaster or Twitter/X and they will appear here.</p>
          </div>`;
     return;
   }
 
   listEl.innerHTML = bookmarks.map((b) => {
-    const author = extractAuthor(b);
-    const fid = extractFid(b);
-    const text = extractText(b);
-    const time = formatTime(b.saved_at);
+    const author = extractBookmarkAuthor(b);
+    const authorMeta = extractBookmarkAuthorMeta(b);
+    const text = extractBookmarkText(b);
+    const time = formatBookmarkTime(b);
     const via = b.captured_via || "unknown";
-    const hash = b.castHash || "";
-    const castUrl = extractCastUrl(b);
+    const platform = getBookmarkPlatform(b);
+    const bookmarkId = getBookmarkId(b) || "";
+    const recordUrl = extractBookmarkUrl(b);
+    const quoted = extractBookmarkQuote(b);
 
     return `
-      <div class="bookmark-item" data-hash="${escapeAttr(hash)}">
-        <div class="bookmark-content" data-url="${escapeAttr(castUrl || "")}">
+      <div class="bookmark-item platform-${escapeAttr(platform)}" data-id="${escapeAttr(bookmarkId)}">
+        <div class="bookmark-content" data-url="${escapeAttr(recordUrl || "")}">
           <div class="bookmark-author">
-            ${escapeHtml(author)}${fid ? `<span class="fid">#${fid}</span>` : ""}
+            ${escapeHtml(author)}${authorMeta ? `<span class="fid">${escapeHtml(authorMeta)}</span>` : ""}
           </div>
           <div class="bookmark-text">${escapeHtml(text || "(no text)")}</div>
+          ${renderQuotedItem(quoted)}
         </div>
         <div class="bookmark-footer">
           <span>${time}</span>
           <span>
-            <span class="capture-badge">${via}</span>
-            <button class="delete-btn" data-hash="${escapeAttr(hash)}" title="Remove">&times;</button>
+            <span class="capture-badge platform-${escapeAttr(platform)}">${platform} · ${via}</span>
+            <button class="delete-btn" data-id="${escapeAttr(bookmarkId)}" title="Remove">&times;</button>
           </span>
         </div>
       </div>`;
@@ -127,48 +135,52 @@ function renderList() {
   listEl.querySelectorAll(".delete-btn").forEach((el) => {
     el.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const hash = el.dataset.hash;
-      if (!hash) return;
-      delete allBookmarks[hash];
+      const bookmarkId = el.dataset.id;
+      if (!bookmarkId) return;
+      removeLocalBookmark(bookmarkId);
       renderList();
-      await chrome.runtime.sendMessage({ type: "FC_DELETE_BOOKMARK", castHash: hash });
+      await chrome.runtime.sendMessage({ type: "FC_DELETE_BOOKMARK", castHash: bookmarkId });
     });
   });
 }
 
-// ── Extract helpers ───────────────────────────────────────────
-
-function extractText(b) {
-  const d = b.castData;
-  if (!d) return "";
-  return d.text || d.body?.text || d.cast?.text || d.result?.cast?.text || "";
-}
-
-function extractAuthor(b) {
-  const d = b.castData;
-  if (!d) return "Unknown";
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  return a.displayName || a.display_name || a.username ||
-    (a.fid ? `fid:${a.fid}` : "Unknown");
-}
-
-function extractFid(b) {
-  const d = b.castData;
-  if (!d) return null;
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  return a.fid || d.authorFid || null;
-}
-
-function extractCastUrl(b) {
-  const d = b.castData;
-  if (!d) return null;
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  const username = a.username;
-  const hash = b.castHash || d.hash || d.cast?.hash;
-  if (username && hash) {
-    return `https://farcaster.xyz/${username}/${hash.slice(0, 10)}`;
+function removeLocalBookmark(bookmarkId) {
+  delete allBookmarks[bookmarkId];
+  if (bookmarkId.startsWith("farcaster:")) {
+    delete allBookmarks[bookmarkId.slice("farcaster:".length)];
   }
-  return null;
+}
+
+function getSortMode() {
+  return localStorage.getItem("fc_sort_mode") || "saved";
+}
+
+function formatBookmarkTime(bookmark) {
+  const sortMode = getSortMode();
+  const publishedAt = extractBookmarkPublishedAt(bookmark);
+
+  if (sortMode === "published" && publishedAt) {
+    return `posted ${formatTime(publishedAt)}`;
+  }
+  if (bookmark.saved_at) {
+    return `saved ${formatTime(bookmark.saved_at)}`;
+  }
+  if (publishedAt) {
+    return `posted ${formatTime(publishedAt)}`;
+  }
+  return "";
+}
+
+function renderQuotedItem(quoted) {
+  if (!quoted) return "";
+  const author = quoted.author_display_name || "Unknown";
+  const handle = quoted.author_username ? `@${quoted.author_username}` : quoted.platform;
+  const text = quoted.text || "(no text)";
+  return `
+    <div class="bookmark-quote">
+      <div class="bookmark-quote-author">${escapeHtml(author)} <span class="fid">${escapeHtml(handle)}</span></div>
+      <div class="bookmark-quote-text">${escapeHtml(text)}</div>
+    </div>`;
 }
 
 function formatTime(iso) {
@@ -201,8 +213,8 @@ function escapeAttr(str) {
 let toastTimer = null;
 
 function showToast(bookmark, { removed = false } = {}) {
-  const author = extractAuthor(bookmark);
-  const text = extractText(bookmark);
+  const author = extractBookmarkAuthor(bookmark);
+  const text = extractBookmarkText(bookmark);
   const preview = text.length > 60 ? text.slice(0, 60) + "..." : text;
 
   const labelEl = toastEl.querySelector(".toast-label");
@@ -244,7 +256,8 @@ function watchStorage() {
       // Scroll to top and highlight
       listEl.scrollTop = 0;
       requestAnimationFrame(() => {
-        const el = listEl.querySelector(`[data-hash="${CSS.escape(added.castHash)}"]`);
+        const bookmarkId = getBookmarkId(added);
+        const el = bookmarkId ? listEl.querySelector(`[data-id="${CSS.escape(bookmarkId)}"]`) : null;
         if (el) el.classList.add("fresh");
       });
     }
@@ -260,6 +273,10 @@ function watchStorage() {
 // ── Search ────────────────────────────────────────────────────
 
 searchEl.addEventListener("input", () => renderList());
+sortEl.addEventListener("change", () => {
+  localStorage.setItem("fc_sort_mode", sortEl.value);
+  renderList();
+});
 
 // ── Sync ──────────────────────────────────────────────────────
 
@@ -270,12 +287,20 @@ document.getElementById("syncBtn").addEventListener("click", async () => {
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url?.includes("farcaster.xyz")) {
-      flash(btn, "Open Farcaster first");
+    if (!tab?.id || !tab.url) {
+      flash(btn, "No active tab");
       return;
     }
 
-    const result = await FarcasterAdapter.exportAll(tab.id);
+    let adapter = null;
+    if (FarcasterAdapter.canHandle(tab.url)) adapter = FarcasterAdapter;
+    if (TwitterAdapter.canHandle(tab.url)) adapter = TwitterAdapter;
+    if (!adapter) {
+      flash(btn, "Open Farcaster or X");
+      return;
+    }
+
+    const result = await adapter.exportAll(tab.id);
 
     if (result.error) {
       flash(btn, "Sync failed");
@@ -285,6 +310,7 @@ document.getElementById("syncBtn").addEventListener("click", async () => {
     if (result.items.length > 0) {
       const syncResult = await chrome.runtime.sendMessage({
         type: "FC_SYNC_BOOKMARKS",
+        platform: adapter === TwitterAdapter ? "twitter" : "farcaster",
         items: result.items,
       });
       // storage.onChanged will trigger renderList
@@ -302,8 +328,7 @@ document.getElementById("syncBtn").addEventListener("click", async () => {
 document.getElementById("exportBtn").addEventListener("click", () => {
   const entries = getSortedBookmarks();
   if (entries.length === 0) return;
-  const items = entries.map((b) => b.castData).filter(Boolean);
-  const payload = buildExportPayload(items, { source: "archive" });
+  const payload = buildExportPayload(entries, { path: "archive" });
   downloadJSON(payload);
 });
 

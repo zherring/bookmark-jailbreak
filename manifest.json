@@ -1,12 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "Farcaster Bookmarks Exporter",
-  "version": "0.2.0",
-  "description": "Auto-capture and browse your Farcaster bookmarks",
+  "name": "FC Bookmarks + Twitter Spike",
+  "version": "0.2.1",
+  "version_name": "0.2.1 twitter-spike",
+  "description": "Spike build: Farcaster bookmarks exporter with Twitter/X bookmark probe",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel", "webRequest"],
-  "host_permissions": ["https://farcaster.xyz/*"],
+  "host_permissions": [
+    "https://farcaster.xyz/*",
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
   "action": {
-    "default_title": "Farcaster Bookmarks"
+    "default_title": "FC Bookmarks + Twitter Spike",
+    "default_popup": "popup.html"
   },
   "background": {
     "service_worker": "background.js"
@@ -24,6 +30,18 @@
     {
       "matches": ["https://farcaster.xyz/*"],
       "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["twitter-spike.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["twitter-content.js"],
       "run_at": "document_start",
       "world": "ISOLATED"
     }
