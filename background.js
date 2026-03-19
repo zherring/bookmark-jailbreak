@@ -18,8 +18,9 @@ const META_KEY = "fc_meta";
 const LAST_ADDED_KEY = "fc_last_added";
 const LAST_REMOVED_KEY = "fc_last_removed";
 
-// Open side panel when the extension icon is clicked
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+// Let the toolbar action show the popup. The side panel remains available
+// via the popup's "Open Archive" button.
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 
 // ── webRequest backup: detect bookmark API calls at the network level ──
 // This fires even if the MAIN world fetch patch fails (race condition, overwrite, etc.)
@@ -99,6 +100,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleBookmarkAction(message).then(sendResponse);
     return true;
   }
+  if (message.type === "FC_TWITTER_BOOKMARK_ACTION") {
+    handleTwitterBookmarkAction(message).then(sendResponse);
+    return true;
+  }
+  if (message.type === "FC_TWITTER_BOOKMARK_ENRICH") {
+    enrichTwitterBookmark(message).then(sendResponse);
+    return true;
+  }
   if (message.type === "FC_GET_STATS") {
     getStats().then(sendResponse);
     return true;
@@ -108,7 +117,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === "FC_SYNC_BOOKMARKS") {
-    syncBookmarks(message.items).then(sendResponse);
+    syncBookmarks(message.items, message.platform).then(sendResponse);
     return true;
   }
   if (message.type === "FC_DELETE_BOOKMARK") {
@@ -125,6 +134,65 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Ignore duplicate actions for the same hash within 3 seconds.
 const recentActions = new Map(); // castHash → timestamp
 
+function makeBookmarkId(platform, itemId) {
+  return `${platform}:${itemId}`;
+}
+
+function parseTwitterDate(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return isNaN(parsed) ? null : new Date(parsed).toISOString();
+}
+
+function extractTwitterTweet(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.__typename === "TweetWithVisibilityResults" && raw.tweet?.rest_id) return raw.tweet;
+  if (raw.__typename === "Tweet" && raw.rest_id) return raw;
+  if (raw.rest_id && raw.legacy) return raw;
+  if (raw.tweet?.rest_id) return raw.tweet;
+  if (raw.result) return extractTwitterTweet(raw.result);
+  return null;
+}
+
+function normalizeStoredBookmark(platform, item, options = {}) {
+  if (!item) return null;
+
+  if (platform === "twitter") {
+    const tweet = extractTwitterTweet(item);
+    const itemId = tweet?.rest_id || item?.rest_id || item?.legacy?.id_str || null;
+    if (!itemId) return null;
+    const publishedAt = parseTwitterDate(tweet?.legacy?.created_at);
+    return {
+      id: makeBookmarkId("twitter", itemId),
+      platform: "twitter",
+      itemId,
+      rawData: tweet || item,
+      saved_at: options.savedAt || publishedAt || new Date().toISOString(),
+      published_at: publishedAt,
+      captured_via: options.capturedVia || "sync",
+    };
+  }
+
+  const itemId = item.hash || item.castHash || item.cast_hash || null;
+  if (!itemId) return null;
+  return {
+    id: makeBookmarkId("farcaster", itemId),
+    platform: "farcaster",
+    itemId,
+    castHash: itemId,
+    rawData: item,
+    saved_at: options.savedAt || item.savedAt || item.saved_at || item.bookmarkedAt || item.timestamp || new Date().toISOString(),
+    published_at: item.timestamp || item.publishedAt || item.published_at || null,
+    captured_via: options.capturedVia || "sync",
+  };
+}
+
+function getExistingRecord(bookmarks, platform, itemId) {
+  if (!itemId) return null;
+  const id = makeBookmarkId(platform, itemId);
+  return bookmarks[id] || (platform === "farcaster" ? bookmarks[itemId] : null) || null;
+}
+
 async function handleBookmarkAction(message) {
   const { action, castHash, castData, timestamp } = message;
 
@@ -140,8 +208,13 @@ async function handleBookmarkAction(message) {
     if (castData && action !== "remove") {
       const data = await chrome.storage.local.get([BOOKMARKS_KEY]);
       const bookmarks = data[BOOKMARKS_KEY] || {};
-      if (bookmarks[castHash] && !bookmarks[castHash].castData?.author && castData.author) {
-        bookmarks[castHash].castData = castData;
+      const bookmarkId = makeBookmarkId("farcaster", castHash);
+      const existing = bookmarks[bookmarkId] || bookmarks[castHash];
+      if (existing && !existing.rawData?.author && castData.author) {
+        existing.rawData = castData;
+        existing.castData = castData;
+        bookmarks[bookmarkId] = existing;
+        delete bookmarks[castHash];
         await chrome.storage.local.set({ [BOOKMARKS_KEY]: bookmarks });
       }
     }
@@ -156,19 +229,25 @@ async function handleBookmarkAction(message) {
   const data = await chrome.storage.local.get([BOOKMARKS_KEY, META_KEY]);
   const bookmarks = data[BOOKMARKS_KEY] || {};
   const meta = data[META_KEY] || {};
+  const bookmarkId = makeBookmarkId("farcaster", castHash);
 
   // Grab existing record before potential delete (for removal toast)
-  const existingRecord = bookmarks[castHash] || null;
+  const existingRecord = bookmarks[bookmarkId] || bookmarks[castHash] || null;
 
   if (action === "remove") {
+    delete bookmarks[bookmarkId];
     delete bookmarks[castHash];
   } else {
-    bookmarks[castHash] = {
+    const record = normalizeStoredBookmark("farcaster", castData || existingRecord?.rawData || { hash: castHash }, {
+      savedAt: timestamp || existingRecord?.saved_at || new Date().toISOString(),
+      capturedVia: "live",
+    });
+    bookmarks[bookmarkId] = {
+      ...record,
       castHash,
-      castData: castData || bookmarks[castHash]?.castData || null,
-      saved_at: timestamp || new Date().toISOString(),
-      captured_via: "live",
+      castData: record.rawData,
     };
+    delete bookmarks[castHash];
   }
 
   meta.total_count = Object.keys(bookmarks).length;
@@ -183,13 +262,21 @@ async function handleBookmarkAction(message) {
 
   if (action === "remove") {
     updates[LAST_REMOVED_KEY] = {
+      id: bookmarkId,
+      platform: "farcaster",
+      itemId: castHash,
       castHash,
-      castData: existingRecord?.castData || castData || null,
+      rawData: existingRecord?.rawData || castData || null,
+      castData: existingRecord?.rawData || castData || null,
       _ts: Date.now(),
     };
   } else {
     updates[LAST_ADDED_KEY] = {
+      id: bookmarkId,
+      platform: "farcaster",
+      itemId: castHash,
       castHash,
+      rawData: castData || null,
       castData: castData || null,
       saved_at: timestamp || new Date().toISOString(),
       captured_via: "live",
@@ -202,14 +289,127 @@ async function handleBookmarkAction(message) {
   return { ok: true, action, castHash, total: meta.total_count };
 }
 
-async function deleteBookmark(castHash) {
-  if (!castHash) return { ok: false, reason: "no_cast_hash" };
+async function handleTwitterBookmarkAction(message) {
+  const { action, itemId, rawData, timestamp } = message;
+  if (!itemId) return { ok: false, reason: "no_item_id" };
+
+  const dedupeKey = `twitter:${action}:${itemId}`;
+  const lastTime = recentActions.get(dedupeKey);
+  if (lastTime && Date.now() - lastTime < 3000) {
+    if (rawData && action !== "remove") {
+      const data = await chrome.storage.local.get([BOOKMARKS_KEY]);
+      const bookmarks = data[BOOKMARKS_KEY] || {};
+      const bookmarkId = makeBookmarkId("twitter", itemId);
+      if (bookmarks[bookmarkId] && !bookmarks[bookmarkId].rawData?.core?.user_results && rawData.core?.user_results) {
+        bookmarks[bookmarkId].rawData = rawData;
+        await chrome.storage.local.set({ [BOOKMARKS_KEY]: bookmarks });
+      }
+    }
+    return { ok: true, action, itemId, deduplicated: true };
+  }
+  recentActions.set(dedupeKey, Date.now());
+  for (const [k, t] of recentActions) {
+    if (Date.now() - t > 10000) recentActions.delete(k);
+  }
+
+  const data = await chrome.storage.local.get([BOOKMARKS_KEY, META_KEY]);
+  const bookmarks = data[BOOKMARKS_KEY] || {};
+  const meta = data[META_KEY] || {};
+  const bookmarkId = makeBookmarkId("twitter", itemId);
+  const existingRecord = bookmarks[bookmarkId] || null;
+
+  if (action === "remove") {
+    delete bookmarks[bookmarkId];
+  } else {
+    const fallbackRaw = rawData || existingRecord?.rawData || {
+      __typename: "Tweet",
+      rest_id: itemId,
+      legacy: { id_str: itemId, full_text: "" },
+    };
+    const record = normalizeStoredBookmark("twitter", fallbackRaw, {
+      savedAt: timestamp || existingRecord?.saved_at || new Date().toISOString(),
+      capturedVia: "live",
+    });
+    bookmarks[bookmarkId] = {
+      ...existingRecord,
+      ...record,
+      saved_at: existingRecord?.saved_at || record.saved_at,
+    };
+  }
+
+  meta.total_count = Object.keys(bookmarks).length;
+  meta.last_capture = new Date().toISOString();
+
+  const updates = {
+    [BOOKMARKS_KEY]: bookmarks,
+    [META_KEY]: meta,
+  };
+
+  if (action === "remove") {
+    updates[LAST_REMOVED_KEY] = {
+      id: bookmarkId,
+      platform: "twitter",
+      itemId,
+      rawData: existingRecord?.rawData || rawData || null,
+      _ts: Date.now(),
+    };
+  } else {
+    updates[LAST_ADDED_KEY] = {
+      id: bookmarkId,
+      platform: "twitter",
+      itemId,
+      rawData: rawData || existingRecord?.rawData || null,
+      saved_at: timestamp || new Date().toISOString(),
+      captured_via: "live",
+      _ts: Date.now(),
+    };
+  }
+
+  await chrome.storage.local.set(updates);
+  return { ok: true, action, itemId, total: meta.total_count };
+}
+
+async function enrichTwitterBookmark(message) {
+  const { itemId, rawData } = message;
+  if (!itemId || !rawData) return { ok: false, reason: "missing_payload" };
+
+  const data = await chrome.storage.local.get([BOOKMARKS_KEY]);
+  const bookmarks = data[BOOKMARKS_KEY] || {};
+  const bookmarkId = makeBookmarkId("twitter", itemId);
+  const existing = bookmarks[bookmarkId];
+  if (!existing) return { ok: false, reason: "not_found" };
+
+  const hasAuthor = !!existing.rawData?.core?.user_results;
+  const hasText = !!existing.rawData?.legacy?.full_text;
+  if (hasAuthor && hasText) return { ok: true, skipped: true };
+
+  const record = normalizeStoredBookmark("twitter", rawData, {
+    savedAt: existing.saved_at,
+    capturedVia: existing.captured_via || "live",
+  });
+  if (!record) return { ok: false, reason: "normalize_failed" };
+
+  bookmarks[bookmarkId] = {
+    ...existing,
+    ...record,
+    saved_at: existing.saved_at || record.saved_at,
+  };
+
+  await chrome.storage.local.set({ [BOOKMARKS_KEY]: bookmarks });
+  return { ok: true, enriched: true };
+}
+
+async function deleteBookmark(bookmarkId) {
+  if (!bookmarkId) return { ok: false, reason: "no_bookmark_id" };
 
   const data = await chrome.storage.local.get([BOOKMARKS_KEY, META_KEY]);
   const bookmarks = data[BOOKMARKS_KEY] || {};
   const meta = data[META_KEY] || {};
 
-  delete bookmarks[castHash];
+  delete bookmarks[bookmarkId];
+  if (bookmarkId.startsWith("farcaster:")) {
+    delete bookmarks[bookmarkId.slice("farcaster:".length)];
+  }
   meta.total_count = Object.keys(bookmarks).length;
 
   await chrome.storage.local.set({
@@ -237,26 +437,40 @@ async function getAllBookmarks() {
   return { bookmarks };
 }
 
-async function syncBookmarks(items) {
+async function syncBookmarks(items, platformHint) {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, reason: "no_items" };
   }
 
+  const platform = platformHint || (items[0]?.rest_id || items[0]?.legacy?.full_text ? "twitter" : "farcaster");
   const data = await chrome.storage.local.get([BOOKMARKS_KEY, META_KEY]);
   const bookmarks = data[BOOKMARKS_KEY] || {};
   const meta = data[META_KEY] || {};
   let added = 0;
+  const baseTime = Date.now();
 
-  for (const item of items) {
-    const hash = item.hash || item.castHash || item.cast_hash;
-    if (!hash) continue;
-    if (!bookmarks[hash]) added++;
-    bookmarks[hash] = {
-      castHash: hash,
-      castData: item,
-      saved_at: item.savedAt || item.saved_at || item.bookmarkedAt || item.timestamp || item.publishedAt || item.published_at || new Date().toISOString(),
-      captured_via: "sync",
+  for (const [index, item] of items.entries()) {
+    const fallbackSavedAt = new Date(baseTime - index).toISOString();
+    const record = normalizeStoredBookmark(platform, item, {
+      savedAt: fallbackSavedAt,
+      capturedVia: "sync",
+    });
+    if (!record) continue;
+
+    const existing = getExistingRecord(bookmarks, record.platform, record.itemId);
+    if (!existing) added++;
+
+    bookmarks[record.id] = {
+      ...existing,
+      ...record,
+      saved_at: existing?.saved_at || record.saved_at,
     };
+
+    if (record.platform === "farcaster") {
+      bookmarks[record.id].castHash = record.itemId;
+      bookmarks[record.id].castData = record.rawData;
+      delete bookmarks[record.itemId];
+    }
   }
 
   meta.total_count = Object.keys(bookmarks).length;

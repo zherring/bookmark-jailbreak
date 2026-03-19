@@ -52,56 +52,59 @@ function exportToObsidian(bookmarks) {
   if (entries.length === 0) return;
 
   const files = {};
-  const byAuthor = {};      // author key → { username, fid, displayName, hashes[] }
-  const topicHits = {};     // topic key → count (for knowing which topic files to create)
+  const byAuthor = {};      // author key → info
+  const topicHits = {};     // topic key → count
+  const sourceCounts = {};  // platform → count
 
   // ── Pass 1: bookmark files ──
   for (const b of entries) {
-    const author    = obExtractAuthor(b);
-    const username  = obExtractUsername(b) || sanitizeFilename(author);
-    const fid       = obExtractFid(b);
-    const text      = obExtractText(b);
-    const hash      = b.castHash || "unknown";
-    const shortHash = hash.slice(0, 10);
-    const castUrl   = obExtractCastUrl(b);
-    const savedAt   = b.saved_at ? normalizeTimestamp(b.saved_at) : "";
+    const platform = getBookmarkPlatform(b);
+    const sourceLabel = platformLabel(platform);
+    const author = obExtractAuthor(b);
+    const username = obExtractUsername(b) || sanitizeFilename(author).toLowerCase();
+    const authorId = obExtractFid(b);
+    const authorKey = sanitizeFilename(`${platform}-${username || authorId || author}`);
+    const text = obExtractText(b);
+    const itemId = getBookmarkItemId(b) || "unknown";
+    const shortId = String(itemId).slice(0, 10);
+    const itemUrl = obExtractCastUrl(b);
+    const savedAt = b.saved_at ? normalizeTimestamp(b.saved_at) : "";
     const publishedAt = obExtractPublished(b);
-    const embeds    = obExtractEmbeds(b);
-    const via       = b.captured_via || "unknown";
+    const embeds = obExtractEmbeds(b);
+    const quoted = extractBookmarkQuote(b);
+    const via = b.captured_via || "unknown";
 
     // Detect topics from text
     const topics = detectTopics(text);
     for (const t of topics) { topicHits[t] = (topicHits[t] || 0) + 1; }
+    sourceCounts[platform] = (sourceCounts[platform] || 0) + 1;
 
-    // Stable filename: farcaster-{shortHash}
-    const fileName = `farcaster-${sanitizeFilename(shortHash)}`;
+    // Stable filename: {platform}-{shortId}
+    const fileName = `${platform}-${sanitizeFilename(shortId)}`;
 
-    // ── Frontmatter ──
-    // Required fields
     const fm = {
       record_type: "bookmark",
-      source: "[[Farcaster]]",
-      author: `[[${username}]]`,
+      source: sourceNoteRef(sourceLabel),
+      platform,
+      author: authorNoteRef(authorKey),
       author_display: author,
-      cast_hash: hash,
+      item_id: itemId,
       saved_at: savedAt,
     };
-    // Optional fields
     if (publishedAt) fm.published_at = normalizeTimestamp(publishedAt);
-    if (castUrl) fm.cast_url = castUrl;
-    if (fid) fm.fid = fid;
+    if (itemUrl) fm.item_url = itemUrl;
+    if (authorId) fm.author_id = authorId;
     fm.captured_via = via;
-    fm.topics = topics.map((t) => `[[${CANONICAL_TOPICS[t].label}]]`);
+    fm.topics = topics.map((t) => topicNoteRef(CANONICAL_TOPICS[t].label));
     fm.embeds = embeds.map((e) => e.url).filter(Boolean);
-    fm.tags = ["bookmark", "farcaster"];
-    // LLM enrichment fields (empty, ready for future)
+    fm.tags = ["bookmark", platform];
     fm.llm_summary = null;
     fm.llm_topics = null;
     fm.llm_entities = null;
     fm.llm_confidence = null;
 
     let body = yamlBlock(fm) + "\n";
-    body += `# Cast by [[${username}]]\n\n`;
+    body += `# ${sourceLabel} bookmark by ${authorNoteLink(authorKey, author)}\n\n`;
 
     if (text) {
       body += `> ${text.replace(/\n/g, "\n> ")}\n\n`;
@@ -119,48 +122,64 @@ function exportToObsidian(bookmarks) {
 
     if (topics.length > 0) {
       body += `## Topics\n\n`;
-      body += topics.map((t) => `[[${CANONICAL_TOPICS[t].label}]]`).join(" · ") + "\n\n";
+      body += topics.map((t) => topicNoteLink(CANONICAL_TOPICS[t].label)).join(" · ") + "\n\n";
+    }
+
+    if (quoted) {
+      body += `## Quoted\n\n`;
+      body += `From **${quoted.author_display_name || "Unknown"}**`;
+      if (quoted.author_username) body += ` (@${quoted.author_username})`;
+      body += `\n\n`;
+      body += `> ${(quoted.text || "(no text)").replace(/\n/g, "\n> ")}\n\n`;
+      if (quoted.url) body += `[Open quoted item](${quoted.url})\n\n`;
     }
 
     body += `---\n`;
-    body += `Source: [[Farcaster]] · Author: [[${username}]]`;
-    if (castUrl) body += ` · [View cast](${castUrl})`;
+    body += `Source: ${sourceNoteLink(sourceLabel)} · Author: ${authorNoteLink(authorKey, author)}`;
+    if (itemUrl) body += ` · [Open bookmark source](${itemUrl})`;
     body += `\n`;
 
     files[`Bookmarks/${fileName}.md`] = body;
 
-    // Track author
-    if (!byAuthor[username]) {
-      byAuthor[username] = { displayName: author, username, fid, hashes: [] };
+    if (!byAuthor[authorKey]) {
+      byAuthor[authorKey] = {
+        key: authorKey,
+        displayName: author,
+        username,
+        authorId,
+        platform,
+        bookmarks: [],
+      };
     }
-    byAuthor[username].hashes.push(shortHash);
+    byAuthor[authorKey].bookmarks.push(shortId);
   }
 
   // ── Pass 2: author files ──
   for (const [key, info] of Object.entries(byAuthor)) {
     const safeKey = sanitizeFilename(key);
+    const sourceLabel = platformLabel(info.platform);
     const fm = {
       record_type: "author",
-      platform: "farcaster",
+      platform: info.platform,
       username: info.username,
       display_name: info.displayName,
-      fid: info.fid,
-      bookmark_count: info.hashes.length,
-      tags: ["author", "farcaster"],
+      author_id: info.authorId,
+      bookmark_count: info.bookmarks.length,
+      tags: ["author", info.platform],
     };
 
     let body = yamlBlock(fm) + "\n";
     body += `# ${info.displayName}\n\n`;
     if (info.username) body += `**@${info.username}**`;
-    if (info.fid) body += ` · FID: ${info.fid}`;
-    body += ` · Source: [[Farcaster]]\n\n`;
+    if (info.authorId) body += ` · ID: ${info.authorId}`;
+    body += ` · Source: ${sourceNoteLink(sourceLabel)}\n\n`;
 
     // Dataview: this author's bookmarks
     body += `## Bookmarks\n\n`;
     body += "```dataview\n";
     body += "TABLE saved_at AS \"Saved\", topics AS \"Topics\"\n";
     body += 'FROM ""\n';
-    body += `WHERE record_type = "bookmark" AND author = [[${safeKey}]]\n`;
+    body += 'WHERE record_type = "bookmark" AND author = this.file.link\n';
     body += "SORT saved_at DESC\n";
     body += "```\n\n";
 
@@ -169,7 +188,7 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE length(rows) AS \"Count\"\n";
     body += 'FROM ""\n';
-    body += `WHERE record_type = "bookmark" AND author = [[${safeKey}]]\n`;
+    body += 'WHERE record_type = "bookmark" AND author = this.file.link\n';
     body += "FLATTEN topics AS topic\n";
     body += "GROUP BY topic\n";
     body += "SORT length(rows) DESC\n";
@@ -205,7 +224,7 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE author AS \"Author\", saved_at AS \"Saved\"\n";
     body += 'FROM ""\n';
-    body += `WHERE record_type = "bookmark" AND contains(topics, [[${topic.label}]])\n`;
+      body += 'WHERE record_type = "bookmark" AND contains(topics, this.file.link)\n';
     body += "SORT saved_at DESC\n";
     body += "```\n\n";
 
@@ -214,7 +233,7 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE length(rows) AS \"Bookmarks\"\n";
     body += 'FROM ""\n';
-    body += `WHERE record_type = "bookmark" AND contains(topics, [[${topic.label}]])\n`;
+      body += 'WHERE record_type = "bookmark" AND contains(topics, this.file.link)\n';
     body += "GROUP BY author\n";
     body += "SORT length(rows) DESC\n";
     body += "```\n\n";
@@ -222,24 +241,25 @@ function exportToObsidian(bookmarks) {
     files[`Topics/${topic.label}.md`] = body;
   }
 
-  // ── Source file ──
-  {
+  // ── Source files ──
+  for (const platform of Object.keys(sourceCounts)) {
+    const sourceLabel = platformLabel(platform);
     const fm = {
       record_type: "source",
-      platform: "farcaster",
-      url: "https://farcaster.xyz",
+      platform,
+      url: platform === "twitter" ? "https://x.com/i/bookmarks" : "https://farcaster.xyz/~/bookmarks",
       tags: ["source", "platform"],
     };
 
     let body = yamlBlock(fm) + "\n";
-    body += `# Farcaster\n\n`;
-    body += `Social protocol. Bookmarks captured via browser extension.\n\n`;
+    body += `# ${sourceLabel}\n\n`;
+    body += `Bookmarks captured via browser extension.\n\n`;
 
     body += `## Authors\n\n`;
     body += "```dataview\n";
-    body += "TABLE bookmark_count AS \"Bookmarks\", fid AS \"FID\"\n";
+    body += "TABLE bookmark_count AS \"Bookmarks\", author_id AS \"Author ID\"\n";
     body += 'FROM ""\n';
-    body += 'WHERE record_type = "author" AND platform = "farcaster"\n';
+    body += `WHERE record_type = "author" AND platform = "${platform}"\n`;
     body += "SORT bookmark_count DESC\n";
     body += "```\n\n";
 
@@ -247,12 +267,12 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE author AS \"Author\", topics AS \"Topics\"\n";
     body += 'FROM ""\n';
-    body += 'WHERE record_type = "bookmark" AND source = [[Farcaster]]\n';
+    body += 'WHERE record_type = "bookmark" AND source = this.file.link\n';
     body += "SORT saved_at DESC\n";
     body += "LIMIT 20\n";
     body += "```\n\n";
 
-    files["Sources/Farcaster.md"] = body;
+    files[`Sources/${sourceLabel}.md`] = body;
   }
 
   // ── Dashboard ──
@@ -267,7 +287,7 @@ function exportToObsidian(bookmarks) {
     };
 
     let body = yamlBlock(fm) + "\n";
-    body += `# Farcaster Bookmarks\n\n`;
+    body += `# Bookmarks Dashboard\n\n`;
     body += `**${entries.length}** bookmarks · **${authorCount}** authors · **${topicCount}** topics\n\n`;
 
     // Recent bookmarks
@@ -316,7 +336,7 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE author AS \"Author\", saved_at AS \"Saved\"\n";
     body += 'FROM ""\n';
-    body += 'WHERE record_type = "bookmark" AND length(topics) = 0\n';
+    body += 'WHERE record_type = "bookmark" AND (!topics OR length(topics) = 0)\n';
     body += "SORT saved_at DESC\n";
     body += "LIMIT 20\n";
     body += "```\n\n";
@@ -326,7 +346,7 @@ function exportToObsidian(bookmarks) {
     body += "```dataview\n";
     body += "TABLE author AS \"Author\"\n";
     body += 'FROM ""\n';
-    body += 'WHERE record_type = "bookmark" AND llm_summary = null\n';
+    body += 'WHERE record_type = "bookmark" AND !llm_summary\n';
     body += "SORT saved_at DESC\n";
     body += "LIMIT 20\n";
     body += "```\n\n";
@@ -334,17 +354,17 @@ function exportToObsidian(bookmarks) {
     // Static fallback
     body += `---\n\n`;
     body += `### Navigation\n\n`;
-    body += `- [[Farcaster|Source: Farcaster]]\n`;
-    body += `- Authors: ${Object.keys(byAuthor).slice(0, 10).map((a) => `[[${a}]]`).join(", ")}${authorCount > 10 ? ", ..." : ""}\n`;
-    body += `- Topics: ${Object.keys(topicHits).map((t) => `[[${CANONICAL_TOPICS[t]?.label || t}]]`).join(", ")}\n`;
+    body += `- Sources: ${Object.keys(sourceCounts).map((platform) => sourceNoteLink(platformLabel(platform))).join(", ")}\n`;
+    body += `- Authors: ${Object.keys(byAuthor).slice(0, 10).map((a) => authorNoteLink(a, byAuthor[a].displayName)).join(", ")}${authorCount > 10 ? ", ..." : ""}\n`;
+    body += `- Topics: ${Object.keys(topicHits).map((t) => topicNoteLink(CANONICAL_TOPICS[t]?.label || t)).join(", ")}\n`;
 
-    files["00 Dashboards/Farcaster Bookmarks.md"] = body;
+    files["00 Dashboards/Bookmarks Dashboard.md"] = body;
   }
 
   // Build ZIP and download
   const zip = buildZip(files);
   const date = new Date().toISOString().slice(0, 10);
-  downloadBlob(zip, `farcaster-bookmarks-vault-${date}.zip`, "application/zip");
+  downloadBlob(zip, `bookmarks-vault-${date}.zip`, "application/zip");
 }
 
 // ── Topic detection (keyword-based, deterministic) ────────────
@@ -379,93 +399,87 @@ function yamlField(key, val) {
   if (val === null || val === undefined) return `${key}:\n`;
   if (Array.isArray(val)) {
     if (val.length === 0) return `${key}: []\n`;
-    // Wikilink arrays always use block style (never inline strings)
-    const hasWikilinks = val.some((v) => typeof v === "string" && v.startsWith("[["));
-    if (!hasWikilinks && val.length <= 4 && val.every((v) => typeof v === "string" && v.length < 40)) {
-      return `${key}: [${val.map(yamlScalar).join(", ")}]\n`;
-    }
     let out = `${key}:\n`;
-    for (const item of val) out += `  - ${yamlScalar(item)}\n`;
+    for (const item of val) out += yamlArrayItem(item);
     return out;
   }
   if (typeof val === "number" || typeof val === "boolean") return `${key}: ${val}\n`;
+  if (typeof val === "string" && val.includes("\n")) {
+    return `${key}: |-\n${indentYamlBlock(val, 2)}`;
+  }
   return `${key}: ${yamlScalar(val)}\n`;
+}
+
+function yamlArrayItem(val) {
+  if (typeof val === "string" && val.includes("\n")) {
+    return `  - |-\n${indentYamlBlock(val, 4)}`;
+  }
+  return `  - ${yamlScalar(val)}\n`;
+}
+
+function indentYamlBlock(text, spaces) {
+  const indent = " ".repeat(spaces);
+  return text.split("\n").map((line) => `${indent}${line}`).join("\n") + "\n";
 }
 
 function yamlScalar(val) {
   if (val === null || val === undefined) return "null";
   const s = String(val);
-  // Wikilinks must stay unquoted so Obsidian/Dataview recognise them
-  if (s.startsWith("[[") && s.endsWith("]]")) return s;
-  // Other strings with special chars get quoted
-  if (/[:#{}[\],&*?|>!%@`]/.test(s) || s.includes('"')) {
-    return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  return s;
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 // ── Extract helpers ───────────────────────────────────────────
 
 function obExtractText(b) {
-  const d = b.castData;
-  if (!d) return "";
-  return d.text || d.body?.text || d.cast?.text || d.result?.cast?.text || "";
+  return extractBookmarkText(b);
 }
 
 function obExtractAuthor(b) {
-  const d = b.castData;
-  if (!d) return "Unknown";
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  return a.displayName || a.display_name || a.username || (a.fid ? `fid-${a.fid}` : "Unknown");
+  return extractBookmarkAuthor(b);
 }
 
 function obExtractUsername(b) {
-  const d = b.castData;
-  if (!d) return null;
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  return a.username || null;
+  return extractBookmarkAuthorUsername(b);
 }
 
 function obExtractFid(b) {
-  const d = b.castData;
-  if (!d) return null;
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  return a.fid || d.authorFid || null;
+  return extractBookmarkAuthorId(b);
 }
 
 function obExtractPublished(b) {
-  const d = b.castData;
-  if (!d) return null;
-  return d.timestamp || d.publishedAt || d.published_at || null;
+  return extractBookmarkPublishedAt(b);
 }
 
 function obExtractCastUrl(b) {
-  const d = b.castData;
-  if (!d) return null;
-  const a = d.author || d.user || d.cast?.author || d.result?.cast?.author || {};
-  const username = a.username;
-  const hash = b.castHash || d.hash || d.cast?.hash;
-  if (username && hash) return `https://farcaster.xyz/${username}/${hash.slice(0, 10)}`;
-  return null;
+  return extractBookmarkUrl(b);
 }
 
 function obExtractEmbeds(b) {
-  const d = b.castData;
-  if (!d) return [];
-  let raw = d.embeds || d.body?.embeds || [];
-  if (!Array.isArray(raw)) {
-    raw = typeof raw === "object" ? Object.values(raw) : [];
-  }
-  return raw.map((e) => {
-    if (typeof e === "string") return { type: "link", url: e };
-    const url = e.url || e.uri || e.openGraph?.url || null;
-    let type = e.type || "link";
-    if (!e.type && url) {
-      if (/\.(png|jpg|jpeg|gif|webp|svg)(\?|$)/i.test(url)) type = "image";
-      else if (/\.(mp4|webm|mov)(\?|$)/i.test(url)) type = "video";
-    }
-    return { type, url };
-  }).filter((e) => e.url);
+  return extractBookmarkEmbeds(b);
+}
+
+function authorNoteRef(key) {
+  return `[[Authors/${key}]]`;
+}
+
+function authorNoteLink(key, label) {
+  return `[[Authors/${key}|${label}]]`;
+}
+
+function sourceNoteRef(label) {
+  return `[[Sources/${label}]]`;
+}
+
+function sourceNoteLink(label) {
+  return `[[Sources/${label}|${label}]]`;
+}
+
+function topicNoteRef(label) {
+  return `[[Topics/${label}]]`;
+}
+
+function topicNoteLink(label) {
+  return `[[Topics/${label}|${label}]]`;
 }
 
 function normalizeTimestamp(val) {

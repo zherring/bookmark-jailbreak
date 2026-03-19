@@ -7,8 +7,8 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 14px;
-      color: #1a1a1a;
-      background: #fafafa;
+      color: #111827;
+      background: #f3f4f6;
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -16,18 +16,22 @@
 
     .header {
       padding: 16px;
-      background: #7c3aed;
-      color: white;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.96), rgba(243,244,246,0.92)),
+        radial-gradient(circle at top left, rgba(209,213,219,0.35), transparent 48%);
+      color: #111827;
       flex-shrink: 0;
+      border-bottom: 1px solid #e5e7eb;
+      backdrop-filter: blur(10px);
     }
     .header h1 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
-    .header .stats { font-size: 12px; opacity: 0.85; }
+    .header .stats { font-size: 12px; color: #6b7280; }
 
     /* Toast */
     .toast {
       position: fixed;
       top: 0; left: 0; right: 0;
-      background: #059669;
+      background: #111827;
       color: white;
       padding: 12px 16px;
       font-size: 13px;
@@ -38,7 +42,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     .toast.show { transform: translateY(0); }
-    .toast.removed { background: #d97706; }
+    .toast.removed { background: #7c2d12; }
     .toast .toast-label {
       font-size: 10px;
       text-transform: uppercase;
@@ -54,7 +58,8 @@
       gap: 8px;
       flex-shrink: 0;
       border-bottom: 1px solid #e5e7eb;
-      background: white;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(10px);
     }
     .actions button {
       flex: 1;
@@ -68,24 +73,39 @@
       color: #374151;
     }
     .actions button:hover { background: #f9fafb; border-color: #9ca3af; }
-    .actions button.primary { background: #7c3aed; color: white; border-color: #7c3aed; }
-    .actions button.primary:hover { background: #6d28d9; }
+    .actions button.primary { background: #111827; color: white; border-color: #111827; }
+    .actions button.primary:hover { background: #1f2937; }
 
     /* Search */
     .search-bar {
       padding: 8px 16px;
       flex-shrink: 0;
-      background: white;
+      background: rgba(255,255,255,0.92);
+    }
+    .search-controls {
+      display: flex;
+      gap: 8px;
     }
     .search-bar input {
-      width: 100%;
+      flex: 1;
       padding: 8px 12px;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
       font-size: 13px;
       outline: none;
     }
-    .search-bar input:focus { border-color: #7c3aed; }
+    .search-bar input:focus { border-color: #111827; }
+    .search-bar select {
+      width: 92px;
+      padding: 8px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      font-size: 12px;
+      background: white;
+      color: #374151;
+      outline: none;
+    }
+    .search-bar select:focus { border-color: #111827; }
 
     /* Bookmark list */
     .bookmark-list {
@@ -96,9 +116,13 @@
     .bookmark-item {
       padding: 12px 16px;
       border-bottom: 1px solid #f3f4f6;
+      border-left: 2px solid transparent;
       position: relative;
+      background: rgba(255,255,255,0.88);
     }
-    .bookmark-item:hover { background: #f3f4f6; }
+    .bookmark-item:hover { background: #ffffff; }
+    .bookmark-item.platform-farcaster { border-left-color: #7c3aed; }
+    .bookmark-item.platform-twitter { border-left-color: #111827; }
     .bookmark-item.fresh { animation: freshPulse 2s ease-out; }
     @keyframes freshPulse {
       0% { background: #d1fae5; }
@@ -108,7 +132,7 @@
     .bookmark-author {
       font-size: 12px;
       font-weight: 600;
-      color: #7c3aed;
+      color: #111827;
       margin-bottom: 4px;
     }
     .bookmark-author .fid { font-weight: 400; color: #9ca3af; margin-left: 4px; }
@@ -116,6 +140,28 @@
       font-size: 13px;
       color: #374151;
       line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .bookmark-quote {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-left: 3px solid #d1d5db;
+      background: #f9fafb;
+      border-radius: 0 6px 6px 0;
+    }
+    .bookmark-quote-author {
+      font-size: 11px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .bookmark-quote-text {
+      font-size: 12px;
+      color: #4b5563;
+      line-height: 1.35;
       display: -webkit-box;
       -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
@@ -130,12 +176,20 @@
       align-items: center;
     }
     .capture-badge {
-      background: #ede9fe;
-      color: #7c3aed;
+      background: #f3f4f6;
+      color: #4b5563;
       padding: 1px 6px;
       border-radius: 4px;
       font-size: 10px;
       font-weight: 500;
+    }
+    .capture-badge.platform-farcaster {
+      background: #ede9fe;
+      color: #6d28d9;
+    }
+    .capture-badge.platform-twitter {
+      background: #e5e7eb;
+      color: #111827;
     }
     .delete-btn {
       background: none;
@@ -165,12 +219,18 @@
   </div>
 
   <div class="header">
-    <h1>Farcaster Bookmarks</h1>
+    <h1>Bookmarks Archive</h1>
     <div class="stats" id="stats">Loading...</div>
   </div>
 
   <div class="search-bar">
-    <input type="text" id="search" placeholder="Search bookmarks...">
+    <div class="search-controls">
+      <input type="text" id="search" placeholder="Search bookmarks...">
+      <select id="sortMode">
+        <option value="saved">Saved</option>
+        <option value="published">Posted</option>
+      </select>
+    </div>
   </div>
 
   <div class="actions">
@@ -183,6 +243,7 @@
 
   <script src="utils.js"></script>
   <script src="farcaster.js"></script>
+  <script src="twitter.js"></script>
   <script src="obsidian-export.js"></script>
   <script src="sidepanel.js"></script>
 </body>
