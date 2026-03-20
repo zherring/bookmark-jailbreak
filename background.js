@@ -20,7 +20,7 @@ const LAST_REMOVED_KEY = "fc_last_removed";
 
 // Let the toolbar action show the popup. The side panel remains available
 // via the popup's "Open Archive" button.
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 // ── webRequest backup: detect bookmark API calls at the network level ──
 // This fires even if the MAIN world fetch patch fails (race condition, overwrite, etc.)

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "FC Bookmarks + Twitter Spike",
-  "version": "0.2.1",
-  "version_name": "0.2.1 twitter-spike",
-  "description": "Spike build: Farcaster bookmarks exporter with Twitter/X bookmark probe",
+  "name": "Bookmark Jailbreak",
+  "version": "0.3.0",
+  "version_name": "0.3.0 bookmark-jailbreak",
+  "description": "Export and archive your bookmarks from Farcaster and Twitter/X",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel", "webRequest"],
   "host_permissions": [
     "https://farcaster.xyz/*",
@@ -11,8 +11,7 @@
     "https://twitter.com/*"
   ],
   "action": {
-    "default_title": "FC Bookmarks + Twitter Spike",
-    "default_popup": "popup.html"
+    "default_title": "Bookmark Jailbreak"
   },
   "background": {
     "service_worker": "background.js"

@@ -408,6 +408,45 @@ function buildExportPayload(records, diagnostics) {
   };
 }
 
+function downloadMarkdown(records) {
+  const date = new Date().toISOString().slice(0, 10);
+  const lines = [`# Bookmarks — ${date}\n`];
+
+  for (const record of records) {
+    const author = extractBookmarkAuthor(record);
+    const username = extractBookmarkAuthorUsername(record);
+    const text = extractBookmarkText(record);
+    const url = extractBookmarkUrl(record);
+    const platform = getBookmarkPlatform(record);
+    const savedAt = record.saved_at || "";
+    const publishedAt = extractBookmarkPublishedAt(record) || "";
+    const topics = detectExportTopics(text);
+
+    lines.push(`## ${author}${username ? ` (@${username})` : ""}`);
+    lines.push("");
+    if (text) lines.push(text);
+    lines.push("");
+    if (url) lines.push(`[View on ${platformLabel(platform)}](${url})`);
+    if (topics.length) lines.push(`**Topics:** ${topics.map((k) => EXPORT_TOPICS[k]?.label || k).join(", ")}`);
+    lines.push(`**Platform:** ${platformLabel(platform)} | **Saved:** ${savedAt.slice(0, 10) || "—"} | **Posted:** ${publishedAt.slice(0, 10) || "—"}`);
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+
+  const filename = `bookmarks-${date}.md`;
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(blobUrl);
+  return filename;
+}
+
 function downloadJSON(payload) {
   const date = new Date().toISOString().slice(0, 10);
   const prefix = payload.source === "mixed" ? "bookmarks" : `${payload.source}-bookmarks`;
