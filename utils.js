@@ -388,7 +388,7 @@ function buildExportPayload(records, diagnostics) {
     exported_at: new Date().toISOString(),
     meta: {
       extractor: "fc-bookmarks-exporter",
-      version: "0.4.0",
+      version: "0.3.0",
       path: diagnostics?.path || "archive",
       route: diagnostics?.route || null,
       platforms,

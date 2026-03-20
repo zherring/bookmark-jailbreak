@@ -470,7 +470,7 @@ function setView(view) {
   actionsBarEl.hidden = !isList;
 
   if (!isList) {
-    try { renderFeed(); } catch (e) { feedEl.innerHTML = `<div class="empty-state"><p>Error: ${e.message}</p></div>`; }
+    try { renderFeed(); } catch (e) { feedEl.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(e.message)}</p></div>`; }
   }
 }
 
