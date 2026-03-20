@@ -8,18 +8,51 @@
  */
 
 const listEl = document.getElementById("bookmarkList");
-const statsEl = document.getElementById("stats");
+const feedEl = document.getElementById("feedView");
+const pillEl = document.getElementById("pill");
 const searchEl = document.getElementById("search");
-const sortEl = document.getElementById("sortMode");
+const sortToggleEl = document.getElementById("sortToggle");
 const toastEl = document.getElementById("toast");
+const toastLabelEl = document.getElementById("toast-label");
 const toastTextEl = document.getElementById("toast-text");
+const viewListBtn = document.getElementById("viewList");
+const viewFeedBtn = document.getElementById("viewFeed");
+const searchBarEl = document.querySelector(".search-bar");
+const actionsBarEl = document.querySelector(".actions");
 
 let allBookmarks = {};
+let currentView = "list"; // "list" or "feed"
+let platformFilter = "all"; // "all", "farcaster", "twitter"
+const platformToggleEl = document.getElementById("platformToggle");
+
+// ── Theme (domain-keyed accent color) ───────────────────────
+
+const THEMES = {
+  farcaster: { accent: "#7c3aed", accentLight: "#ede9fe", accentHover: "#6d28d9" },
+  twitter:   { accent: "#111827", accentLight: "#e5e7eb", accentHover: "#1f2937" },
+  default:   { accent: "#7c3aed", accentLight: "#ede9fe", accentHover: "#6d28d9" },
+};
+
+async function applyTheme() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = tab?.url || "";
+    let theme = THEMES.default;
+    if (/x\.com|twitter\.com/.test(url)) theme = THEMES.twitter;
+    else if (/farcaster\.xyz/.test(url)) theme = THEMES.farcaster;
+    document.documentElement.style.setProperty("--accent", theme.accent);
+    document.documentElement.style.setProperty("--accent-light", theme.accentLight);
+    document.documentElement.style.setProperty("--accent-hover", theme.accentHover);
+  } catch {
+    // ignore — keep default purple
+  }
+}
 
 // ── Init ──────────────────────────────────────────────────────
 
 async function init() {
-  sortEl.value = getSortMode();
+  updateSortToggle();
+  applyTheme();
   await loadBookmarks();
   renderList();
   watchStorage();
@@ -35,20 +68,39 @@ async function loadBookmarks() {
 function getSortedBookmarks(filter) {
   let entries = Object.values(allBookmarks);
 
+  if (platformFilter !== "all") {
+    entries = entries.filter((b) => getBookmarkPlatform(b) === platformFilter);
+  }
+
   if (filter) {
-    const q = filter.toLowerCase();
+    const parsed = parseSearchFilter(filter);
     entries = entries.filter((b) => {
-      const text = extractBookmarkText(b).toLowerCase();
-      const author = extractBookmarkAuthor(b).toLowerCase();
-      const quoted = extractBookmarkQuote(b);
-      const quotedText = quoted?.text?.toLowerCase() || "";
-      const quotedAuthor = quoted?.author_display_name?.toLowerCase() || "";
-      return text.includes(q) || author.includes(q) || quotedText.includes(q) || quotedAuthor.includes(q);
+      // from: operator — match author display name or username
+      if (parsed.from) {
+        const author = extractBookmarkAuthor(b).toLowerCase();
+        const username = (extractBookmarkAuthorUsername(b) || "").toLowerCase();
+        if (!author.includes(parsed.from) && !username.includes(parsed.from)) return false;
+      }
+      // topic: operator — match detected topics
+      if (parsed.topic) {
+        const text = extractBookmarkText(b);
+        const topics = detectExportTopics(text).map((k) => (EXPORT_TOPICS[k]?.label || k).toLowerCase());
+        if (!topics.some((t) => t.includes(parsed.topic))) return false;
+      }
+      // free text — search everything
+      if (parsed.text) {
+        const q = parsed.text;
+        const text = extractBookmarkText(b).toLowerCase();
+        const author = extractBookmarkAuthor(b).toLowerCase();
+        const quoted = extractBookmarkQuote(b);
+        const quotedText = quoted?.text?.toLowerCase() || "";
+        const quotedAuthor = quoted?.author_display_name?.toLowerCase() || "";
+        if (!text.includes(q) && !author.includes(q) && !quotedText.includes(q) && !quotedAuthor.includes(q)) return false;
+      }
+      return true;
     });
   }
 
-  // Newest first (descending). Prefer saved_at, fall back to the cast's
-  // published timestamp so synced items without a saved_at still sort properly.
   entries.sort((a, b) => {
     const ta = bestTime(a, getSortMode());
     const tb = bestTime(b, getSortMode());
@@ -81,14 +133,14 @@ function renderList() {
   const bookmarks = getSortedBookmarks(filter);
   const total = Object.keys(allBookmarks).length;
 
-  statsEl.textContent = `${total} bookmark${total !== 1 ? "s" : ""} archived`;
+  pillEl.textContent = total;
 
   if (bookmarks.length === 0) {
     listEl.innerHTML = filter
       ? `<div class="empty-state"><p>No matches for "${escapeHtml(filter)}"</p></div>`
       : `<div class="empty-state">
            <p>No bookmarks yet</p>
-           <p class="hint">Sync or capture bookmarks from Farcaster or Twitter/X and they will appear here.</p>
+           <p class="hint">Go to your bookmarks tab to sync them all, or bookmark individual posts.</p>
          </div>`;
     return;
   }
@@ -155,6 +207,11 @@ function getSortMode() {
   return localStorage.getItem("fc_sort_mode") || "saved";
 }
 
+function updateSortToggle() {
+  const mode = getSortMode();
+  sortToggleEl.textContent = mode === "published" ? "Posted" : "Saved";
+}
+
 function formatBookmarkTime(bookmark) {
   const sortMode = getSortMode();
   const publishedAt = extractBookmarkPublishedAt(bookmark);
@@ -217,23 +274,39 @@ function showToast(bookmark, { removed = false } = {}) {
   const text = extractBookmarkText(bookmark);
   const preview = text.length > 60 ? text.slice(0, 60) + "..." : text;
 
-  const labelEl = toastEl.querySelector(".toast-label");
   if (removed) {
-    labelEl.textContent = "Bookmark removed";
-    toastTextEl.textContent = `${author}: ${preview || "Removed from archive"}`;
-    toastEl.classList.add("removed");
+    toastLabelEl.textContent = "Bookmark removed";
+    toastTextEl.innerHTML = escapeHtml(`${author}: ${preview || "Removed from archive"}`);
+    toastEl.className = "toast removed show";
   } else {
-    labelEl.textContent = "Bookmark captured";
-    toastTextEl.textContent = `${author}: ${preview || "New bookmark saved"}`;
-    toastEl.classList.remove("removed");
+    toastLabelEl.textContent = "Bookmark captured";
+    toastTextEl.innerHTML = escapeHtml(`${author}: ${preview || "New bookmark saved"}`);
+    toastEl.className = "toast show";
   }
 
-  toastEl.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toastEl.classList.remove("show");
-    toastEl.classList.remove("removed");
-  }, 4000);
+  toastTimer = setTimeout(() => { toastEl.className = "toast"; }, 4000);
+}
+
+function showNavigateToast(destUrl, label) {
+  toastLabelEl.textContent = "Navigate to bookmarks";
+  toastTextEl.innerHTML = `Open <a id="toast-nav-link" href="#">${escapeHtml(label)}</a> to sync your bookmarks`;
+  toastEl.className = "toast navigate show";
+
+  // Make the link clickable
+  const link = document.getElementById("toast-nav-link");
+  if (link) {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        if (tab?.id) chrome.tabs.update(tab.id, { url: destUrl });
+      });
+      toastEl.className = "toast";
+    });
+  }
+
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.className = "toast"; }, 8000);
 }
 
 // ── Live updates via storage.onChanged ────────────────────────
@@ -242,18 +315,16 @@ function watchStorage() {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
 
-    // If bookmarks changed, reload the full set
     if (changes.fc_bookmarks) {
       allBookmarks = changes.fc_bookmarks.newValue || {};
       renderList();
+      if (currentView === "feed") renderFeed();
     }
 
-    // If a new bookmark was just captured, show toast
     if (changes.fc_last_added && changes.fc_last_added.newValue) {
       const added = changes.fc_last_added.newValue;
       showToast(added);
 
-      // Scroll to top and highlight
       listEl.scrollTop = 0;
       requestAnimationFrame(() => {
         const bookmarkId = getBookmarkId(added);
@@ -262,7 +333,6 @@ function watchStorage() {
       });
     }
 
-    // If a bookmark was removed (unbookmarked on Farcaster), show removal toast
     if (changes.fc_last_removed && changes.fc_last_removed.newValue) {
       const removed = changes.fc_last_removed.newValue;
       showToast(removed, { removed: true });
@@ -270,11 +340,44 @@ function watchStorage() {
   });
 }
 
-// ── Search ────────────────────────────────────────────────────
+// ── Search & Sort ─────────────────────────────────────────────
+
+function parseSearchFilter(raw) {
+  let from = null;
+  let topic = null;
+  let rest = raw;
+
+  // Extract from:value
+  rest = rest.replace(/\bfrom:(\S+)/gi, (_, v) => { from = v.toLowerCase(); return ""; });
+  // Extract topic:value (allow spaces via quotes: topic:"some topic")
+  rest = rest.replace(/\btopic:"([^"]+)"/gi, (_, v) => { topic = v.toLowerCase(); return ""; });
+  rest = rest.replace(/\btopic:(\S+)/gi, (_, v) => { topic = v.toLowerCase(); return ""; });
+
+  const text = rest.trim().toLowerCase() || null;
+  return { from, topic, text };
+}
+
+function searchFor(query) {
+  searchEl.value = query;
+  setView("list");
+  renderList();
+}
 
 searchEl.addEventListener("input", () => renderList());
-sortEl.addEventListener("change", () => {
-  localStorage.setItem("fc_sort_mode", sortEl.value);
+
+sortToggleEl.addEventListener("click", () => {
+  const current = getSortMode();
+  const next = current === "saved" ? "published" : "saved";
+  localStorage.setItem("fc_sort_mode", next);
+  updateSortToggle();
+  renderList();
+});
+
+platformToggleEl.addEventListener("click", () => {
+  const cycle = { all: "farcaster", farcaster: "twitter", twitter: "all" };
+  platformFilter = cycle[platformFilter] || "all";
+  const labels = { all: "All", farcaster: "Farcaster", twitter: "Twitter" };
+  platformToggleEl.textContent = labels[platformFilter];
   renderList();
 });
 
@@ -295,8 +398,24 @@ document.getElementById("syncBtn").addEventListener("click", async () => {
     let adapter = null;
     if (FarcasterAdapter.canHandle(tab.url)) adapter = FarcasterAdapter;
     if (TwitterAdapter.canHandle(tab.url)) adapter = TwitterAdapter;
+
     if (!adapter) {
-      flash(btn, "Open Farcaster or X");
+      // Not on FC or X at all — show toast with both options
+      showNavigateToast("https://farcaster.xyz/~/bookmarks", "farcaster.xyz/~/bookmarks");
+      flash(btn, "Sync All");
+      return;
+    }
+
+    // On FC or X but not on the bookmarks page
+    const onBookmarksPage = adapter === FarcasterAdapter
+      ? FarcasterAdapter.isBookmarksPage(tab.url)
+      : TwitterAdapter.isBookmarksPage(tab.url);
+    if (!onBookmarksPage) {
+      const isFc = adapter === FarcasterAdapter;
+      const destUrl = isFc ? "https://farcaster.xyz/~/bookmarks" : "https://x.com/i/bookmarks";
+      const label = isFc ? "farcaster.xyz/~/bookmarks" : "x.com/i/bookmarks";
+      showNavigateToast(destUrl, label);
+      flash(btn, "Sync All");
       return;
     }
 
@@ -313,7 +432,6 @@ document.getElementById("syncBtn").addEventListener("click", async () => {
         platform: adapter === TwitterAdapter ? "twitter" : "farcaster",
         items: result.items,
       });
-      // storage.onChanged will trigger renderList
       flash(btn, `Synced ${syncResult.added} new`);
     } else {
       flash(btn, "No bookmarks found");
@@ -332,16 +450,148 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   downloadJSON(payload);
 });
 
-document.getElementById("obsidianBtn").addEventListener("click", () => {
-  if (Object.keys(allBookmarks).length === 0) return;
-  exportToObsidian(allBookmarks);
+document.getElementById("mdBtn").addEventListener("click", () => {
+  const entries = getSortedBookmarks();
+  if (entries.length === 0) return;
+  downloadMarkdown(entries);
 });
+
+// ── View toggle ───────────────────────────────────────────────
+
+function setView(view) {
+  currentView = view;
+  viewListBtn.classList.toggle("active", view === "list");
+  viewFeedBtn.classList.toggle("active", view === "feed");
+
+  const isList = view === "list";
+  listEl.hidden = !isList;
+  feedEl.hidden = isList;
+  searchBarEl.hidden = !isList;
+  actionsBarEl.hidden = !isList;
+
+  if (!isList) {
+    try { renderFeed(); } catch (e) { feedEl.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(e.message)}</p></div>`; }
+  }
+}
+
+viewListBtn.addEventListener("click", () => setView("list"));
+viewFeedBtn.addEventListener("click", () => setView("feed"));
+
+// ── Feed view ─────────────────────────────────────────────────
+
+function renderFeed() {
+  const entries = Object.values(allBookmarks);
+  const total = entries.length;
+
+  if (total === 0) {
+    feedEl.innerHTML = `<div class="empty-state"><p>No bookmarks to analyze yet.</p></div>`;
+    return;
+  }
+
+  // Platform breakdown
+  const platforms = { farcaster: 0, twitter: 0 };
+  // Author counts (keyed by username for search, display name for label)
+  const authorData = {}; // username → { display, count }
+  // Topic counts
+  const topicCounts = {};
+
+  for (const b of entries) {
+    const platform = getBookmarkPlatform(b);
+    platforms[platform] = (platforms[platform] || 0) + 1;
+
+    const author = extractBookmarkAuthor(b);
+    const username = extractBookmarkAuthorUsername(b) || author;
+    if (!authorData[username]) authorData[username] = { display: author, count: 0, platforms: {} };
+    authorData[username].count++;
+    authorData[username].platforms[platform] = (authorData[username].platforms[platform] || 0) + 1;
+
+    const text = extractBookmarkText(b);
+    const topics = detectExportTopics(text);
+    for (const t of topics) {
+      const label = EXPORT_TOPICS[t]?.label || t;
+      topicCounts[label] = (topicCounts[label] || 0) + 1;
+    }
+  }
+
+  // Top authors (top 10)
+  const topAuthors = Object.entries(authorData)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 10);
+  const maxAuthorCount = topAuthors[0]?.[1]?.count || 1;
+
+  // Topics sorted
+  const topTopics = Object.entries(topicCounts)
+    .sort((a, b) => b[1] - a[1]);
+
+  let html = "";
+
+  // Stats grid
+  html += `<div class="feed-section">
+    <div class="feed-stat-grid">
+      <div class="feed-stat-box">
+        <div class="feed-stat-number">${total}</div>
+        <div class="feed-stat-label">Total bookmarks</div>
+      </div>
+      <div class="feed-stat-box">
+        <div class="feed-stat-number">${Object.keys(authorData).length}</div>
+        <div class="feed-stat-label">Unique authors</div>
+      </div>
+      <div class="feed-stat-box">
+        <div class="feed-stat-number" style="color:#7c3aed">${platforms.farcaster || 0}</div>
+        <div class="feed-stat-label">Farcaster</div>
+      </div>
+      <div class="feed-stat-box">
+        <div class="feed-stat-number" style="color:#111827">${platforms.twitter || 0}</div>
+        <div class="feed-stat-label">Twitter / X</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Topics
+  if (topTopics.length > 0) {
+    html += `<div class="feed-section">
+      <div class="feed-section-title">By topic</div>
+      <div class="feed-card">
+        ${topTopics.map(([label, count]) =>
+          `<span class="feed-topic-pill" data-topic="${escapeAttr(label)}" style="cursor:pointer">${escapeHtml(label)} <span style="opacity:0.6">${count}</span></span>`
+        ).join("")}
+      </div>
+    </div>`;
+  }
+
+  // Top authors
+  html += `<div class="feed-section">
+    <div class="feed-section-title">Most bookmarked authors</div>
+    <div class="feed-card">
+      ${topAuthors.map(([username, data]) => {
+        const pct = Math.round((data.count / maxAuthorCount) * 100);
+        const dominant = (data.platforms.twitter || 0) >= (data.platforms.farcaster || 0) ? "twitter" : "farcaster";
+        return `<div class="feed-row" data-author="${escapeAttr(username)}" style="cursor:pointer">
+          <span class="feed-row-label">${escapeHtml(data.display)}</span>
+          <div class="feed-bar-wrap"><div class="feed-bar ${dominant}" style="width:${pct}%"></div></div>
+          <span class="feed-row-value">${data.count}</span>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+
+  feedEl.innerHTML = html;
+
+  // Wire up clicks
+  feedEl.querySelectorAll("[data-author]").forEach((el) => {
+    el.addEventListener("click", () => searchFor(`from:${el.dataset.author}`));
+  });
+  feedEl.querySelectorAll("[data-topic]").forEach((el) => {
+    el.addEventListener("click", () => searchFor(`topic:${el.dataset.topic}`));
+  });
+}
 
 // ── Util ──────────────────────────────────────────────────────
 
 function flash(btn, msg) {
   btn.textContent = msg;
-  setTimeout(() => { btn.textContent = "Sync All"; btn.disabled = false; }, 2000);
+  btn.disabled = true;
+  setTimeout(() => { btn.textContent = "Sync All"; btn.disabled = false; }, 3000);
 }
 
 // ── Start ─────────────────────────────────────────────────────
